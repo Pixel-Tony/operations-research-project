@@ -1,13 +1,13 @@
+from lib.Random import Random
+from lib.Event import Event
+from lib import TrafficLightColor
 from dataclasses import dataclass
 import sys
+print(sys.version_info)
 if sys.version_info >= (3, 11):
     from typing import Self
 else:
     from typing_extensions import Self
-
-from lib.base import TrafficLightColor
-from lib.event import Event
-from lib.random import Random
 
 
 class Tickable:
@@ -147,14 +147,20 @@ class TrafficLight:
 
 
 class Model:
-    def __init__(self, dt: float) -> None:
-        self._dt = dt
+    def __init__(self, width: int, height: int) -> None:
         self._exits = [ExitRoad() for _ in range(4)]
         self._exit_times = {a: 3.5 for a in self._exits}
         exit_choice_probs = [(1, road) for road in self._exits]
         self._entrances = [
             EntranceRoad(
-                RoadStatsLaw(8, 0.4, 1/50, 20, 180, exit_choice_probs),
+                RoadStatsLaw(
+                    n=8,
+                    p=0.4,
+                    lambda_=1/50,
+                    mn=20,
+                    mx=180,
+                    exits=exit_choice_probs
+                ),
                 self._exit_times
             )
             for _ in range(4)
@@ -165,6 +171,13 @@ class Model:
             *self._entrances
         ]
 
-    def tick(self) -> None:
-        dt = self._dt
+    def tick(self, dt) -> None:
         [item.on_tick(dt) for item in self._tickables]
+
+
+if __name__ == '__main__':
+    dt = 0.5
+    model = Model(3, 2)
+    while True:
+        model.tick(dt)
+        print([e.car_count for e in model._entrances])

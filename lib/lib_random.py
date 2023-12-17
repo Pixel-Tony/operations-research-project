@@ -1,6 +1,9 @@
 import math as m
 import random as r
-from .base import T
+
+from typing import TypeVar
+
+_T = TypeVar('_T')
 
 
 class Random:
@@ -34,8 +37,7 @@ class Random:
 
         return table[::-1]
 
-
-    def choice(self, pairs: list[tuple[float, T]]) -> T:
+    def choice(self, pairs: list[tuple[float, _T]]) -> _T:
         w = sum(w for w, _ in pairs)
         p = int(r.random()*w)
         for p1, item in pairs:
@@ -43,4 +45,13 @@ class Random:
                 p -= p1
                 continue
             return item
-        raise
+        raise Exception
+
+
+if __name__ == '__main__':
+    a = Random()
+
+    print(
+        (lambda x: sum(x)/len(x))
+        ([a.exp_dist(1/30) for _ in range(20000)])
+    )
