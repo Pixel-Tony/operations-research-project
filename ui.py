@@ -9,10 +9,13 @@ from lib import Timer, ProducerRoad, ConsumerRoad
 
 
 FONT = "Helvetica 14"
+
 ROAD_WIDTH = 48
 ROAD_COLOR = '#203040'
 ROAD_MARK_YELLOW = '#dd4'
 ROAD_PAD_XY = 60
+
+ARROW_WIDTH = 3
 
 CROSSWALK_WIDTH = 26
 CROSSWALK_GAP = 6
@@ -38,58 +41,35 @@ class App(Tk):
 
         self.model.light_changed += self._on_traffic_light_change
         self.model.car_entered_intersection += self._on_car_entered_inters
-
-    _light_code_to_color = {'R': 'red', 'G': 'green'}
+        self.model.exit_road_cleared += self._on_exit_cleared
+        self.arrows: dict[ConsumerRoad, (ProducerRoad, int, float)] = {}
 
     def _on_car_entered_inters(self, args: tuple[ProducerRoad, ConsumerRoad]):
         prod, cons = args
-        cside, cindex = [
-            (side, conss.index(side))
-            for side, (_, conss) in self.model.roads.items()
-            if cons not in conss
+
+        label = self.car_count_labels[prod.side][prod]
+        label.config(text=str(prod.car_count))
+
+        pside, p_ind = [
+            (side, prods.index(prod))
+            for side, (prods, _) in self.model.roads.items()
+            if prod in prods
         ][0]
-        line_id = self.add_line(prod, cside, cindex)
-        self.arrows[prod] = (cons, line_id)
+        cside, c_ind = [
+            (side, conss.index(cons))
+            for side, (_, conss) in self.model.roads.items()
+            if cons in conss
+        ][0]
+        line_id = self._add_arrow(pside, p_ind, cside, c_ind)
+        self.arrows[cons] = (prod, line_id, cons.consumption_time)
 
-    def add_line(self, pside: str, p_ind: int, cside: str, c_ind: int):
-        ROADS_W, ROADS_H = self.model.width, self.model.height
-        X_MID = ROAD_PAD_XY + ROADS_W*(ROAD_WIDTH + 1) - 1
-        Y_MID = ROAD_PAD_XY + ROADS_H*(ROAD_WIDTH + 1) - 1
-
-        P_SHIFT = (ROAD_WIDTH + 1)*(p_ind + 1) - ROAD_WIDTH // 2
-        C_SHIFT = (ROAD_WIDTH + 1)*(c_ind + 1) - ROAD_WIDTH // 2
-
-        x, y, x1, y1 = [ROAD_PAD_XY for _ in '1234']
-        match pside:
-            case 'T':
-                x += P_SHIFT,
-            case 'R':
-                x = 2*X_MID - x
-                y += P_SHIFT
-            case 'B':
-                x = 2*X_MID - x - P_SHIFT
-                y = 2*Y_MID - y
-            case 'L':
-                y = 2*Y_MID - y - P_SHIFT
-
-        match cside:
-            case 'T':
-                x1 += C_SHIFT
-            case 'R':
-                x1 = 2*X_MID - x1
-                y1 += C_SHIFT
-            case 'B':
-                x1 += C_SHIFT
-                y1 = 2*Y_MID - y1
-            case 'L':
-                y1 += C_SHIFT
-
-        return self.canvas.create_line(x, y, x1, y1, arrow='last')
+    def _on_exit_cleared(self, end: ConsumerRoad):
+        self.canvas.delete(self.arrows.pop(end)[1])
 
     def _on_traffic_light_change(self, current_state: dict):
         for side, color in current_state.items():
             self.canvas.itemconfig(self.light_lens[side],
-                                   fill=self._light_code_to_color[color])
+                                   fill={'R': '#ff2222', 'G': '#22ff22'}[color])
 
     def _on_wave_arrived(self, road: ProducerRoad):
         label = self.car_count_labels[road.side][road]
@@ -235,12 +215,13 @@ class App(Tk):
                       y=50,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['B'].values()):
-            lbl.place(x=80 + X_MID + (ROAD_WIDTH + 1)*i,
+            lbl.place(x=80 + 2*X_MID - ROAD_PAD_XY - (ROAD_WIDTH + 1)*(i + 1),
                       y=81 + 2*Y_MID,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['L'].values()):
             lbl.place(x=30,
-                      y=80 + Y_MID + (ROAD_WIDTH + 1)*i + (ROAD_WIDTH - 30)//2,
+                      y=80 + 2*Y_MID - ROAD_PAD_XY -
+                      (ROAD_WIDTH + 1)*(i + 1) + (ROAD_WIDTH - 30)//2,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['R'].values()):
             lbl.place(x=81 + 2*X_MID,
@@ -284,7 +265,40 @@ class App(Tk):
             for side, i in zip('TRBL', make_traffic_light())
         }
 
-        self.arrows: dict[ProducerRoad, (ConsumerRoad, int)] = {}
+    def _add_arrow(self, pside: str, p_ind: int, cside: str, c_ind: int):
+        ROADS_W, ROADS_H = self.model.width, self.model.height
+        X_MID = ROAD_PAD_XY + ROADS_W*(ROAD_WIDTH + 1) - 1
+        Y_MID = ROAD_PAD_XY + ROADS_H*(ROAD_WIDTH + 1) - 1
+
+        P_SHIFT = (ROAD_WIDTH + 1)*(p_ind + 1) - ROAD_WIDTH // 2
+        C_SHIFT = (ROAD_WIDTH + 1)*(c_ind + 1) - ROAD_WIDTH // 2
+
+        x, y, x1, y1 = [ROAD_PAD_XY for _ in '1234']
+        match pside:
+            case 'T':
+                x += P_SHIFT
+            case 'R':
+                x = 2*X_MID - x
+                y += P_SHIFT
+            case 'B':
+                x = 2*X_MID - x - P_SHIFT
+                y = 2*Y_MID - y
+            case 'L':
+                y = 2*Y_MID - y - P_SHIFT
+        match cside:
+            case 'T':
+                x1 = 2*X_MID - x1 - C_SHIFT
+            case 'R':
+                x1 = 2*X_MID - x1
+                y1 = 2*Y_MID - y1 - C_SHIFT
+            case 'B':
+                x1 += C_SHIFT
+                y1 = 2*Y_MID - y1
+            case 'L':
+                y1 += C_SHIFT
+
+        return self.canvas.create_line(
+            x, y, x1, y1, arrow='last', width=ARROW_WIDTH, fill='red')
 
     @property
     def simulation_speed_factor(self):
@@ -306,9 +320,30 @@ class App(Tk):
     def close(self):
         self.running = False
 
+    def update(self) -> None:
+        super().update()
+        for exit, (_, arrow_id, dur) in self.arrows.items():
+            self.canvas.itemconfig(arrow_id,
+                                   fill=col_interp('#ff0000', '#00ff00',
+                                                   exit.consumption_time/dur))
+
     def loop(self):
         while self.running:
             with self.timer:
                 self.update()
                 self.update_idletasks()
                 self.model.tick(self._simulation_speed_factor/self._frame_rate)
+
+
+def col_interp(c1: str, c2: str, t: float):
+    assert 0 <= t <= 1, t
+    hxi = '0123456789abcdef'.index
+    def fromhex(c): return hxi(
+        c) if not c[1:] else 16*hxi(c[0]) + fromhex(c[1:])
+
+    def totup(c): return [*map(fromhex, (c[:2], c[2:4], c[4:]))]
+    mid = [
+        min(255, int(a*t + b*(1 - t)//2))
+        for a, b in zip(*[totup(s.strip('#').lower()) for s in (c1, c2)])
+    ]
+    return '#' + hex(int.from_bytes(mid, 'big'))[2:].zfill(6)

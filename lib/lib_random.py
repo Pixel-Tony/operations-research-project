@@ -37,7 +37,7 @@ class Random:
 
         return table[::-1]
 
-    def choice(self, pairs: list[tuple[float, _T]]) -> _T:
+    def weightened_choice(self, pairs: list[tuple[float, _T]]) -> _T:
         w = sum(w for w, _ in pairs)
         p = int(r.random()*w)
         for p1, item in pairs:

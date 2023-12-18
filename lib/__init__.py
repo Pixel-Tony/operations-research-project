@@ -1,11 +1,14 @@
 from typing import Literal
 
-from .Event import *
-from .Random import *
-from .Timer import *
+from .lib_event import *
+from .lib_random import *
+from .lib_timer import *
 
 
-def auto_events(cls):
+PRODUCER_ROAD_PASS_TIMEOUT = 3.0
+
+
+def with_event_handlers_init(cls):
     names = [
         name
         for name, typ in cls.__annotations__.items()
@@ -38,7 +41,7 @@ class Road(Tickable):
                  crosswalk_freed: CrosswalkEvent,
                  crosswalk_occupied: CrosswalkEvent
                  ) -> None:
-        self._is_blocked = True
+        self._is_blocked = False
         crosswalk_freed += self._on_freed
         crosswalk_occupied += self._on_occupied
 
@@ -80,6 +83,7 @@ class TrafficFlowLaw:
         self._min_delay = min_delay
         self._max_delay = max_delay
         self._consumers: list[ConsumerRoad] = []
+        self._consumers_for = {}
         self._min_time_on_intersec = min_time_on_intersec
         self._intersec_span = max_time_on_intersec - min_time_on_intersec
 
@@ -89,27 +93,36 @@ class TrafficFlowLaw:
         return r.random()*self._intersec_span + self._min_time_on_intersec
 
     @property
-    def consumer_roads(self):
+    def road_info(self):
         return self._consumers
 
-    @consumer_roads.setter
-    def consumer_roads(self, value: dict[str, tuple[float, 'ConsumerRoad']]):
-        self._consumers = [
-            road for roads in value.values()
-            for road in roads
-        ]
-        self._consumers_without = {
-            side: [
-            road
-            for road in self._consumers
-            if road not in value[side]
-            ]
+    @road_info.setter
+    def road_info(self, value: dict[str, tuple[list['ProducerRoad'], list['ConsumerRoad']]]):
+        def available_roads(i: int, side: str):
+            mpp = lambda *xs: dict(map(tuple, xs))
+            res = []
+            # allow right turn if rightmost
+            # can always go up if not rightmost
+            # allow left turn if leftmost
+            res += [value[mpp('TL', 'BR', 'LB', 'RT')[side]][1][i]] \
+                if i == 0 \
+                else value[mpp('TB', 'BT', 'LR', 'RL')[side]][1][1:-1]
+            if i == len(value[side][0]) - 1:
+                res += [value[mpp('TR', 'BL', 'LT', 'RB')[side]][1][-1]]
+            return res
+
+        self._consumers = value
+        self._consumers_for = {
+            side: {
+                road: available_roads(i, road.side)
+                for i, road in enumerate(value[side][0])
+            }
             for side in value
         }
 
-    def cars(self, exclude: str) -> list[Car]:
+    def cars(self, exclude: str, road: 'ProducerRoad') -> list[Car]:
         return [
-            Car(self._r.choice(self._consumers_without[exclude]),
+            Car(r.choice(self._consumers_for[exclude][road]),
                 self.time_to_pass_intersection)
             for _ in range(self._r.binom_dist(self._max_cars, self._mean))
         ]
@@ -122,7 +135,7 @@ class TrafficFlowLaw:
         return min(self._max_delay, max(v, self._min_delay))
 
 
-@auto_events
+@with_event_handlers_init
 class TrafficLight(Tickable):
     light_changed: Event[LightChangedEventArgs]
 
@@ -146,7 +159,7 @@ class TrafficLight(Tickable):
             yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'}, 30)
 
 
-@auto_events
+@with_event_handlers_init
 class ConsumerRoad(Road):
     car_consumed: Event['ConsumerRoad']
 
@@ -176,11 +189,11 @@ class ConsumerRoad(Road):
 
     def _on_occupied(self, args: IntersectionSideInfo):
         if self in args[1]:
-            self.is_blocked = True
+            self._is_blocked = True
 
     def _on_freed(self, args: IntersectionSideInfo):
         if self in args[1]:
-            self.is_blocked = False
+            self._is_blocked = False
 
     def tick(self, dt: float):
         if not self.is_busy:
@@ -188,11 +201,14 @@ class ConsumerRoad(Road):
 
         self._duration_left_for_car -= dt
         if self._duration_left_for_car <= 0:
+            self._duration_left_for_car = 0
+            if self._is_blocked:
+                return
             self.upcoming_car = None
             self.car_consumed(self)
 
 
-@auto_events
+@with_event_handlers_init
 class ProducerRoad(Road):
     wave_arrived: Event['ProducerRoad']
     car_entered: Event[tuple['ProducerRoad', 'ConsumerRoad']]
@@ -211,11 +227,9 @@ class ProducerRoad(Road):
         self.pos = pos
         self.timeout = 0
         traffic_light_changed += self._on_traffic_light_changed
-
         self.car_prod_law = car_production_law
-
         self.cars: list[Car] = []
-        self._has_car_on_intersection = False
+        self._car_on_inters: Car = None
         self._t_until_wave = car_production_law.wave_delay
 
     def _on_traffic_light_changed(self, args: LightChangedEventArgs):
@@ -233,7 +247,7 @@ class ProducerRoad(Road):
     def _update_incoming_cars(self, dt: float):
         if self._t_until_wave <= 0:
             self._t_until_wave += self.car_prod_law.wave_delay
-            self.cars += self.car_prod_law.cars(self.side)
+            self.cars += self.car_prod_law.cars(self.side, self)
             self.wave_arrived(self)
         self._t_until_wave -= dt
 
@@ -248,7 +262,7 @@ class ProducerRoad(Road):
         destination = self.cars[0].destination
         if not destination.is_busy:
             destination.accept(self.cars.pop(0))
-            self.timeout = 2
+            self.timeout = PRODUCER_ROAD_PASS_TIMEOUT
             self.car_entered((self, destination))
 
     @property
