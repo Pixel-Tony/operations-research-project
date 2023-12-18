@@ -1,10 +1,7 @@
 from lib import *
 
 
-
-
-
-@auto_events
+@with_event_handlers_init
 class Intersection:
     crosswalk_freed: CrosswalkEvent
     crosswalk_occupied: CrosswalkEvent
@@ -61,13 +58,7 @@ class Intersection:
             [ev.car_consumed.subscribe(self.exit_road_cleared)
              for ev in consumers]
 
-        self._production_law.consumer_roads = {
-            side: [
-                (i*i, road)
-                for i, road in enumerate(consumers)
-            ]
-            for side, (_, consumers) in self.roads.items()
-        }
+        self._production_law.road_info = self.roads
 
         traffic_light = TrafficLight(self.roads)
         traffic_light.light_changed += self.light_changed

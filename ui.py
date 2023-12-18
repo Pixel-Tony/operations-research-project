@@ -9,10 +9,13 @@ from lib import Timer, ProducerRoad, ConsumerRoad
 
 
 FONT = "Helvetica 14"
+
 ROAD_WIDTH = 48
 ROAD_COLOR = '#203040'
 ROAD_MARK_YELLOW = '#dd4'
 ROAD_PAD_XY = 60
+
+ARROW_WIDTH = 3
 
 CROSSWALK_WIDTH = 26
 CROSSWALK_GAP = 6
@@ -41,7 +44,6 @@ class App(Tk):
         self.model.exit_road_cleared += self._on_exit_cleared
         self.arrows: dict[ConsumerRoad, (ProducerRoad, int, float)] = {}
 
-
     def _on_car_entered_inters(self, args: tuple[ProducerRoad, ConsumerRoad]):
         prod, cons = args
 
@@ -58,17 +60,16 @@ class App(Tk):
             for side, (_, conss) in self.model.roads.items()
             if cons in conss
         ][0]
-        line_id = self._add_line(pside, p_ind, cside, c_ind)
-        self.arrows[cons] = (prod, line_id)
+        line_id = self._add_arrow(pside, p_ind, cside, c_ind)
+        self.arrows[cons] = (prod, line_id, cons.consumption_time)
 
     def _on_exit_cleared(self, end: ConsumerRoad):
-        (_, ind) = self.arrows.pop(end)
-        self.canvas.delete(ind)
+        self.canvas.delete(self.arrows.pop(end)[1])
 
     def _on_traffic_light_change(self, current_state: dict):
         for side, color in current_state.items():
             self.canvas.itemconfig(self.light_lens[side],
-                                   fill={'R': 'red', 'G': 'green'}[color])
+                                   fill={'R': '#ff2222', 'G': '#22ff22'}[color])
 
     def _on_wave_arrived(self, road: ProducerRoad):
         label = self.car_count_labels[road.side][road]
@@ -219,7 +220,8 @@ class App(Tk):
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['L'].values()):
             lbl.place(x=30,
-                      y=80 + 2*Y_MID - ROAD_PAD_XY - (ROAD_WIDTH + 1)*(i + 1) + (ROAD_WIDTH - 30)//2,
+                      y=80 + 2*Y_MID - ROAD_PAD_XY -
+                      (ROAD_WIDTH + 1)*(i + 1) + (ROAD_WIDTH - 30)//2,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['R'].values()):
             lbl.place(x=81 + 2*X_MID,
@@ -263,7 +265,7 @@ class App(Tk):
             for side, i in zip('TRBL', make_traffic_light())
         }
 
-    def _add_line(self, pside: str, p_ind: int, cside: str, c_ind: int):
+    def _add_arrow(self, pside: str, p_ind: int, cside: str, c_ind: int):
         ROADS_W, ROADS_H = self.model.width, self.model.height
         X_MID = ROAD_PAD_XY + ROADS_W*(ROAD_WIDTH + 1) - 1
         Y_MID = ROAD_PAD_XY + ROADS_H*(ROAD_WIDTH + 1) - 1
@@ -295,8 +297,8 @@ class App(Tk):
             case 'L':
                 y1 += C_SHIFT
 
-        return self.canvas.create_line(x, y, x1, y1,
-                                       arrow='last', width=2, fill='red')
+        return self.canvas.create_line(
+            x, y, x1, y1, arrow='last', width=ARROW_WIDTH, fill='red')
 
     @property
     def simulation_speed_factor(self):
@@ -318,6 +320,13 @@ class App(Tk):
     def close(self):
         self.running = False
 
+    def update(self) -> None:
+        super().update()
+        for exit, (_, arrow_id, dur) in self.arrows.items():
+            self.canvas.itemconfig(arrow_id,
+                                   fill=col_interp('#ff0000', '#00ff00',
+                                                   exit.consumption_time/dur))
+
     def loop(self):
         while self.running:
             with self.timer:
@@ -327,11 +336,14 @@ class App(Tk):
 
 
 def col_interp(c1: str, c2: str, t: float):
-    assert len(c1) == len(c2) == 6 and 0 <= t <= 1
-    hxi = lambda i: '0123456789abcdef'.index(i)
-    fromhex = lambda c: hxi(c) if not c[1:] else 16*hxi(c[0]) + fromhex(c[1:])
-    totup = lambda c: (fromhex(c[:2]), fromhex(c[2:4]), fromhex(c[4:]))
-    c1, c2 = totup(c1.lower()), totup(c2.lower())
-    mid = [min(256, int(a*t + b*(1 - t))) for a, b in zip(c1, c2)]
-    return hex(((mid[0]*256) + mid[1]*256) + mid[2])[:2]
+    assert 0 <= t <= 1, t
+    hxi = '0123456789abcdef'.index
+    def fromhex(c): return hxi(
+        c) if not c[1:] else 16*hxi(c[0]) + fromhex(c[1:])
 
+    def totup(c): return [*map(fromhex, (c[:2], c[2:4], c[4:]))]
+    mid = [
+        min(255, int(a*t + b*(1 - t)//2))
+        for a, b in zip(*[totup(s.strip('#').lower()) for s in (c1, c2)])
+    ]
+    return '#' + hex(int.from_bytes(mid, 'big'))[2:].zfill(6)
