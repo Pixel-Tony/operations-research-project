@@ -26,10 +26,11 @@ GRAPH_HISTORY_SIZE = 80
 
 
 class App(Tk):
-    def __init__(self, *models: Intersection):
+    def __init__(self, models: list[Intersection], labels: list[str]):
         super().__init__()
         self.model = models[0]
         self.models = models[1:]
+        self.labels = labels
 
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.resizable(False, False)
@@ -280,11 +281,11 @@ class App(Tk):
             .place(x=640, y=5, width=40, height=40)
 
         self.speed_label = Label(self, font=FONT)
-        self.speed_label.place(x=700, height=40, width=280)
+        self.speed_label.place(x=700, y=5, height=40, width=250)
 
     def _sim_speed_increase(self):
         cur = self.simulation_speed_factor
-        self.simulation_speed_factor = min(cur*2, 200)
+        self.simulation_speed_factor = min(cur*2, 5*self.frame_rate)
 
     def _sim_speed_decrease(self):
         cur = self.simulation_speed_factor
@@ -324,7 +325,7 @@ class App(Tk):
                 y1 += C_SHIFT
 
         return (self.canvas.create_line(
-            x, y, x1, y1, arrow='last', width=ARROW_WIDTH, fill='red'),
+            x, y, x1, y1, arrow='last', width=ARROW_WIDTH, fill='#ff8800'),
             (x, y, x1, y1)
         )
 
@@ -358,8 +359,7 @@ class App(Tk):
                                     y*t + y1*(1-t),
                                     x1, y1)
                                    )
-            self.canvas.itemconfig(arrow_id,
-                                   fill=col_interp('#ff0000', '#00ff00', t))
+
         self._graph_update_delay -= dt
         if self._graph_update_delay > 0:
             return
@@ -378,8 +378,8 @@ class App(Tk):
 
     def loop(self):
         self._plots_info = {
-            m: self.graph.plot(coords[0], coords[3], label=f'Середнє {i}')[0]
-            for i,m in enumerate((self.model, *self.models))
+            m: self.graph.plot(coords[0], coords[3], label=lbl)[0]
+            for (m, lbl) in zip((self.model, *self.models), self.labels)
             for coords in [m.traffic_light.get_samples()]
         }
         self.graph.legend()
@@ -391,16 +391,3 @@ class App(Tk):
                 self.update(model_tick)
                 self.update_idletasks()
 
-
-def col_interp(c1: str, c2: str, t: float):
-    assert 0 <= t <= 1, t
-    hxi = '0123456789abcdef'.index
-    def fromhex(c): return hxi(
-        c) if not c[1:] else 16*hxi(c[0]) + fromhex(c[1:])
-
-    def totup(c): return [*map(fromhex, (c[:2], c[2:4], c[4:]))]
-    mid = [
-        min(255, int(a*t + b*(1 - t)//2))
-        for a, b in zip(*[totup(s.strip('#').lower()) for s in (c1, c2)])
-    ]
-    return '#' + hex(int.from_bytes(mid, 'big'))[2:].zfill(6)

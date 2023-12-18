@@ -7,8 +7,9 @@ from .lib_timer import *
 
 
 PRODUCER_ROAD_PASS_TIMEOUT = 3.0
-OPT_LIGHT_AVERAGING_DUR = 20
-OPT_LIGHT_HISTORY_SIZE = 100
+OPT_LIGHT_AVERAGING_DUR = 50
+LIGHT_CYCLE_DUR = 120
+OPT_LIGHT_HISTORY_SIZE = 150
 
 
 def clamp(mn, mx, v): return min(mx, max(mn, v))
@@ -159,9 +160,10 @@ class TrafficLight(Tickable):
         self._wait_times: np.ndarray = np.full((4, 1), -1)
         self._drop_waiting_amounts()
 
-        self._h_time = 30
-        self._v_time = 30
+        self._h_time = LIGHT_CYCLE_DUR/2
+        self._v_time = LIGHT_CYCLE_DUR/2
         self._time_until_next_avg = OPT_LIGHT_AVERAGING_DUR
+        self._time_until_optim = 60
 
         self.time_until_switch = 0
         self.states = self.states_iterator()
@@ -192,6 +194,12 @@ class TrafficLight(Tickable):
         self._cur_waiting_amounts[0] += dt*(sums['L'] + sums['R'])
         self._cur_waiting_amounts[1] += dt*(sums['T'] + sums['B'])
 
+        self._time_until_optim -= dt
+        if self._time_until_optim <= 0:
+            self.optimize()
+            if self._time_until_optim <= 0:
+                self._time_until_optim = 60
+
         self._time_until_next_avg -= dt
         if self._time_until_next_avg > 0:
             return
@@ -214,10 +222,8 @@ class TrafficLight(Tickable):
 
     def states_iterator(self) -> tuple[dict[str, TrafficLightColor], float]:
         while True:
-            for _ in range(1):
-                yield ({'T': 'R', 'B': 'R', 'L': 'G', 'R': 'G'}, self._h_time)
-                yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'}, self._v_time)
-            self.optimize()
+            yield ({'T': 'R', 'B': 'R', 'L': 'G', 'R': 'G'}, self._h_time)
+            yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'}, self._v_time)
 
 @with_event_handlers_init
 class ConsumerRoad(Road):
