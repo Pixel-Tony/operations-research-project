@@ -1,9 +1,0 @@
-{
-    "[python]": {
-        "editor.suggest.localityBonus": true,
-    },
-    "editor.rulers": [
-        80
-    ],
-    "python.analysis.typeCheckingMode": "off"
-}
