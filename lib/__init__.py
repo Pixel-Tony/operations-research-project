@@ -7,8 +7,7 @@ from .lib_timer import *
 
 
 PRODUCER_ROAD_PASS_TIMEOUT = 3.0
-OPT_LIGHT_AVERAGING_DUR = 5
-OPT_LIGHT_OPTIMIZATION_STEP_DELAY = 20
+OPT_LIGHT_AVERAGING_DUR = 20
 OPT_LIGHT_HISTORY_SIZE = 100
 
 
@@ -114,7 +113,7 @@ class TrafficFlowLaw:
             # allow left turn if leftmost
             res += [value[mpp('TL', 'BR', 'LB', 'RT')[side]][1][i]] \
                 if i == 0 \
-                else value[mpp('TB', 'BT', 'LR', 'RL')[side]][1][1:-1]
+                else value[mpp('TB', 'BT', 'LR', 'RL')[side]][1][1:]
             if i == len(value[side][0]) - 1:
                 res += [value[mpp('TR', 'BL', 'LT', 'RB')[side]][1][-1]]
             return res
@@ -128,9 +127,9 @@ class TrafficFlowLaw:
             for side in value
         }
 
-    def cars(self, exclude: str, road: 'ProducerRoad') -> list[Car]:
+    def cars(self, side: str, road: 'ProducerRoad') -> list[Car]:
         return [
-            Car(r.choice(self._consumers_for[exclude][road]),
+            Car(r.choice(self._consumers_for[side][road]),
                 self.time_to_pass_intersection)
             for _ in range(self._r.binom_dist(self._max_cars, self._mean))
         ]
@@ -163,7 +162,6 @@ class TrafficLight(Tickable):
         self._h_time = 30
         self._v_time = 30
         self._time_until_next_avg = OPT_LIGHT_AVERAGING_DUR
-        self._time_until_optim = OPT_LIGHT_OPTIMIZATION_STEP_DELAY
 
         self.time_until_switch = 0
         self.states = self.states_iterator()
@@ -173,6 +171,9 @@ class TrafficLight(Tickable):
 
     def _drop_waiting_amounts(self):
         self._cur_waiting_amounts = [0, 0]
+
+    def get_durations(self):
+        return self._h_time, self._v_time
 
     def optimize(self): ...
 
@@ -190,13 +191,6 @@ class TrafficLight(Tickable):
         }
         self._cur_waiting_amounts[0] += dt*(sums['L'] + sums['R'])
         self._cur_waiting_amounts[1] += dt*(sums['T'] + sums['B'])
-
-        self._time_until_optim -= dt
-        if self._time_until_optim <= 0:
-            self.optimize()
-            # If wasn't set inside
-            if self._time_until_optim <= 0:
-                self._time_until_optim += OPT_LIGHT_OPTIMIZATION_STEP_DELAY
 
         self._time_until_next_avg -= dt
         if self._time_until_next_avg > 0:
@@ -220,11 +214,10 @@ class TrafficLight(Tickable):
 
     def states_iterator(self) -> tuple[dict[str, TrafficLightColor], float]:
         while True:
-            yield ({'T': 'R', 'B': 'R', 'L': 'G', 'R': 'G'},
-                   self._h_time)
-            yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'},
-                   self._v_time)
-
+            for _ in range(1):
+                yield ({'T': 'R', 'B': 'R', 'L': 'G', 'R': 'G'}, self._h_time)
+                yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'}, self._v_time)
+            self.optimize()
 
 @with_event_handlers_init
 class ConsumerRoad(Road):

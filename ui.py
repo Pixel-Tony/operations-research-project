@@ -1,9 +1,8 @@
-from tkinter import Tk, Label, Frame, Canvas
+from tkinter import Button, Tk, Label, Frame, Canvas
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.axes import Axes
-import numpy as np
 
 from intersection import Intersection
 from lib import Timer, ProducerRoad, ConsumerRoad
@@ -27,9 +26,10 @@ GRAPH_HISTORY_SIZE = 80
 
 
 class App(Tk):
-    def __init__(self, model: Intersection):
+    def __init__(self, *models: Intersection):
         super().__init__()
-        self.model = model
+        self.model = models[0]
+        self.models = models[1:]
 
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.resizable(False, False)
@@ -49,7 +49,7 @@ class App(Tk):
         self.model.light_changed += self._on_traffic_light_change
         self.model.car_entered_intersection += self._on_car_entered_inters
         self.model.exit_road_cleared += self._on_exit_cleared
-        self.arrows: dict[ConsumerRoad, (ProducerRoad, int, float)] = {}
+        self.arrows: dict[ConsumerRoad, (ProducerRoad, int, tuple[int, ...], float)] = {}
 
     def _on_car_entered_inters(self, args: tuple[ProducerRoad, ConsumerRoad]):
         prod, cons = args
@@ -67,8 +67,8 @@ class App(Tk):
             for side, (_, conss) in self.model.roads.items()
             if cons in conss
         ][0]
-        line_id = self._add_arrow(pside, p_ind, cside, c_ind)
-        self.arrows[cons] = (prod, line_id, cons.consumption_time)
+        line_id, coords = self._add_arrow(pside, p_ind, cside, c_ind)
+        self.arrows[cons] = (prod, line_id, coords, cons.consumption_time)
 
     def _on_exit_cleared(self, end: ConsumerRoad):
         self.canvas.delete(self.arrows.pop(end)[1])
@@ -152,8 +152,9 @@ class App(Tk):
         X_MID = ROAD_PAD_XY + ROADS_W*(ROAD_WIDTH + 1) - 1
         Y_MID = ROAD_PAD_XY + ROADS_H*(ROAD_WIDTH + 1) - 1
 
+        CANVAS_PAD_Y = 80
         self.canvas_frame = Frame(self)
-        self.canvas_frame.place(x=80, y=80, width=500, height=500)
+        self.canvas_frame.place(x=80, y=CANVAS_PAD_Y, width=500, height=500)
 
         canvas = Canvas(self.canvas_frame)
         self.canvas = canvas
@@ -220,20 +221,20 @@ class App(Tk):
         CAR_COUNT_LABEL_CFG = dict(width=ROAD_WIDTH, height=30)
         for i, lbl in enumerate(self.car_count_labels['T'].values()):
             lbl.place(x=80 + ROAD_PAD_XY + (ROAD_WIDTH + 1)*i,
-                      y=50,
+                      y=CANVAS_PAD_Y - 30,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['B'].values()):
             lbl.place(x=80 + 2*X_MID - ROAD_PAD_XY - (ROAD_WIDTH + 1)*(i + 1),
-                      y=81 + 2*Y_MID,
+                      y=CANVAS_PAD_Y + 1 + 2*Y_MID,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['L'].values()):
             lbl.place(x=30,
-                      y=80 + 2*Y_MID - ROAD_PAD_XY -
+                      y=CANVAS_PAD_Y + 2*Y_MID - ROAD_PAD_XY -
                       (ROAD_WIDTH + 1)*(i + 1) + (ROAD_WIDTH - 30)//2,
                       **CAR_COUNT_LABEL_CFG)
         for i, lbl in enumerate(self.car_count_labels['R'].values()):
             lbl.place(x=81 + 2*X_MID,
-                      y=80 + ROAD_PAD_XY +
+                      y=CANVAS_PAD_Y + ROAD_PAD_XY +
                       (ROAD_WIDTH + 1)*i + (ROAD_WIDTH - 30)//2,
                       **CAR_COUNT_LABEL_CFG)
 
@@ -273,6 +274,23 @@ class App(Tk):
             for side, i in zip('TRBL', make_traffic_light())
         }
 
+        Button(self, text='<<', command=self._sim_speed_decrease, font=FONT)\
+            .place(x=580, y=5, width=40, height=40)
+        Button(self, text='>>', command=self._sim_speed_increase, font=FONT)\
+            .place(x=640, y=5, width=40, height=40)
+
+        self.speed_label = Label(self, font=FONT)
+        self.speed_label.place(x=700, height=40, width=280)
+
+    def _sim_speed_increase(self):
+        cur = self.simulation_speed_factor
+        self.simulation_speed_factor = min(cur*2, 200)
+
+    def _sim_speed_decrease(self):
+        cur = self.simulation_speed_factor
+        self.simulation_speed_factor = max(cur//2, 1)
+
+
     def _add_arrow(self, pside: str, p_ind: int, cside: str, c_ind: int):
         ROADS_W, ROADS_H = self.model.width, self.model.height
         X_MID = ROAD_PAD_XY + ROADS_W*(ROAD_WIDTH + 1) - 1
@@ -305,8 +323,10 @@ class App(Tk):
             case 'L':
                 y1 += C_SHIFT
 
-        return self.canvas.create_line(
-            x, y, x1, y1, arrow='last', width=ARROW_WIDTH, fill='red')
+        return (self.canvas.create_line(
+            x, y, x1, y1, arrow='last', width=ARROW_WIDTH, fill='red'),
+            (x, y, x1, y1)
+        )
 
     @property
     def simulation_speed_factor(self):
@@ -315,6 +335,7 @@ class App(Tk):
     @simulation_speed_factor.setter
     def simulation_speed_factor(self, value):
         self._simulation_speed_factor = value
+        self.speed_label.config(text=f"Швидкість симуляції: {value}x")
 
     @property
     def frame_rate(self):
@@ -330,10 +351,15 @@ class App(Tk):
 
     def update(self, dt) -> None:
         super().update()
-        for exit, (_, arrow_id, dur) in self.arrows.items():
+        for exit, (_, arrow_id, (x, y, x1, y1), dur) in self.arrows.items():
+            t = exit.consumption_time/dur
+            self.canvas.coords(arrow_id,
+                                   (x*t + x1*(1-t),
+                                    y*t + y1*(1-t),
+                                    x1, y1)
+                                   )
             self.canvas.itemconfig(arrow_id,
-                                   fill=col_interp('#ff0000', '#00ff00',
-                                                   exit.consumption_time/dur))
+                                   fill=col_interp('#ff0000', '#00ff00', t))
         self._graph_update_delay -= dt
         if self._graph_update_delay > 0:
             return
@@ -341,29 +367,27 @@ class App(Tk):
         self._update_graph()
 
     def _update_graph(self):
-        coords = self.model.traffic_light.get_samples()
-        if not self._plots_info:
-            self._plots_info = [
-                self.graph.plot(coords[0], coords[i])[0]
-                for i in range(1, coords.shape[0])
-            ]
-            self.graph.legend(self._plots_info,
-                              ('Сумарний час очікування по горизонталі',
-                               'Сумарний час очікування по вертикалі',
-                               'Середнє двох часів'))
-        else:
-            [x.set_data(coords[0], coords[i + 1])
-             for i, x in enumerate(self._plots_info)]
-            self.graph.set_xlim(coords[0, 0] - 2, coords[0, -1] + 2)
-            self.graph.set_ylim(-2, coords[1:3].max()*1.4)
-            self.figure.canvas.draw()
-            self.figure.canvas.flush_events()
+        for model in (self.model, *self.models):
+            coords = model.traffic_light.get_samples()
+            self._plots_info[model].set_data(coords[0], coords[3])
+
+        self.graph.set_xlim(coords[0, 0] - 2, coords[0, -1] + 2)
+        self.graph.set_ylim(-2, max([m.traffic_light.get_samples()[1:3].max() for m in [self.model, *self.models]]))
+        self.figure.canvas.draw()
+        self.figure.canvas.flush_events()
 
     def loop(self):
+        self._plots_info = {
+            m: self.graph.plot(coords[0], coords[3], label=f'Середнє {i}')[0]
+            for i,m in enumerate((self.model, *self.models))
+            for coords in [m.traffic_light.get_samples()]
+        }
+        self.graph.legend()
         while self.running:
             with self.timer:
                 model_tick = self._simulation_speed_factor/self._frame_rate
                 self.model.tick(model_tick)
+                [m.tick(model_tick) for m in self.models]
                 self.update(model_tick)
                 self.update_idletasks()
 

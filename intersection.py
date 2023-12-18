@@ -1,5 +1,4 @@
 from lib import *
-from optimized import OptimizingTrafficLight
 
 
 @with_event_handlers_init
@@ -11,21 +10,28 @@ class Intersection:
     wave_arrived: Event[ProducerRoad]
     car_entered_intersection: Event[tuple[ProducerRoad, ConsumerRoad]]
 
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(self, width: int, height: int, light_type: type[TrafficLight],
+                 laws: dict[str, list[TrafficFlowLaw]] = None):
         self.width = width
         self.height = height
-        # self.corners =
-        TL, TR, BR, BL = [None for _ in range(4)]
 
-        self._production_law = TrafficFlowLaw(
-            max_cars=12,
-            avg_car_count=3,
-            lambda_=1/120,
-            min_delay=20,
-            max_delay=240,
-            min_time_on_intersec=1,
-            max_time_on_intersec=5
-        )
+        if laws is None:
+            law = TrafficFlowLaw(
+                max_cars=12,
+                avg_car_count=3,
+                lambda_=1/120,
+                min_delay=20,
+                max_delay=240,
+                min_time_on_intersec=1,
+                max_time_on_intersec=5
+            )
+            laws = {
+                side: [law for _ in range(width)]
+                for side in 'TB'
+            } | {
+                side: [law for _ in range(height)]
+                for side in 'LR'
+            }
 
         self.roads: dict[str, IntersectionSideInfo] = {
             side: (
@@ -34,7 +40,7 @@ class Intersection:
                                  pos,
                                  self.crosswalk_freed,
                                  self.crosswalk_occupied,
-                                 self._production_law,
+                                 laws[side][pos],
                                  self.light_changed)
                     for pos in range(size)
                 ], [
@@ -43,11 +49,11 @@ class Intersection:
                                  self.crosswalk_occupied)
                     for pos in range(size)
                 ]
-            ) for side, size, corners in (
-                ('T', width, (TL, TR)),
-                ('R', height, (TR, BR)),
-                ('B', width, (BR, BL)),
-                ('L', height, (BL, TL))
+            ) for side, size in (
+                ('T', width),
+                ('R', height),
+                ('B', width),
+                ('L', height)
             )
         }
 
@@ -59,16 +65,13 @@ class Intersection:
             [ev.car_consumed.subscribe(self.exit_road_cleared)
              for ev in consumers]
 
-        self._production_law.road_info = self.roads
+        for law_side in laws.values():
+            for law in law_side:
+                law.road_info = self.roads
 
-        traffic_light = OptimizingTrafficLight(roads=self.roads)
-        print(f"Using {type(traffic_light)}")
+        traffic_light = light_type(roads=self.roads)
         traffic_light.light_changed += self.light_changed
         self.traffic_light = traffic_light
-
-    @property
-    def production_law(self):
-        return self._production_law
 
     def tick(self, dt):
         self.traffic_light.tick(dt)
