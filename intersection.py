@@ -1,4 +1,5 @@
 from lib import *
+from optimized import OptimizingTrafficLight
 
 
 @with_event_handlers_init
@@ -19,14 +20,14 @@ class Intersection:
         self._production_law = TrafficFlowLaw(
             max_cars=12,
             avg_car_count=3,
-            lambda_=1/80,
+            lambda_=1/120,
             min_delay=20,
             max_delay=240,
-            min_time_on_intersec=2,
+            min_time_on_intersec=1,
             max_time_on_intersec=5
         )
 
-        self.roads: dict[str, tuple[list[ProducerRoad], list[ConsumerRoad]]] = {
+        self.roads: dict[str, IntersectionSideInfo] = {
             side: (
                 [
                     ProducerRoad(side,
@@ -60,7 +61,8 @@ class Intersection:
 
         self._production_law.road_info = self.roads
 
-        traffic_light = TrafficLight(self.roads)
+        traffic_light = OptimizingTrafficLight(roads=self.roads)
+        print(f"Using {type(traffic_light)}")
         traffic_light.light_changed += self.light_changed
         self.traffic_light = traffic_light
 

@@ -3,6 +3,7 @@ from tkinter import Tk, Label, Frame, Canvas
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.axes import Axes
+import numpy as np
 
 from intersection import Intersection
 from lib import Timer, ProducerRoad, ConsumerRoad
@@ -21,6 +22,9 @@ CROSSWALK_WIDTH = 26
 CROSSWALK_GAP = 6
 CROSSWALK_COLOR = '#ccc'
 
+GRAPH_UPDATE_INTERVAL = 3
+GRAPH_HISTORY_SIZE = 80
+
 
 class App(Tk):
     def __init__(self, model: Intersection):
@@ -32,6 +36,9 @@ class App(Tk):
         self.running = True
         self._draw_ui()
         self._frame_rate = 60
+
+        self._plots_info = None
+        self._graph_update_delay = GRAPH_UPDATE_INTERVAL
 
         self.timer = Timer(1/self._frame_rate)
         self._simulation_speed_factor = 1
@@ -89,7 +96,9 @@ class App(Tk):
             canvas.get_tk_widget().place(x=x, y=y, width=width, height=height)
             ax = Axes(fig, 1, 1, 1)
             fig.add_axes(ax)
-            return ax
+            ax.set_xlabel('Час з початку симуляції, с')
+            ax.set_ylabel('Час, с')
+            return fig, ax
 
         def make_decorations():
             # Road plates: horizontal, vertical
@@ -151,8 +160,8 @@ class App(Tk):
         canvas.place(width=500, height=500)
 
         self.graph_frame = Frame(self)
-        self.graph_frame.place(x=550, y=50, width=600, height=400)
-        self.graph = make_graph(self.graph_frame, 0, 0, 600, 400)
+        self.graph_frame.place(x=550, y=50, width=600, height=500)
+        self.figure, self.graph = make_graph(self.graph_frame, 0, 0, 600, 500)
 
         make_decorations()
 
@@ -177,7 +186,6 @@ class App(Tk):
                 for cur_left in (p_left(i, line_n),
                                  2*X_MID - p_left(i, line_n) - CROSSWALK_GAP)
             ]
-
             horizontal = [
                 [
                     rectangle(cur_left, cur_top,
@@ -320,19 +328,44 @@ class App(Tk):
     def close(self):
         self.running = False
 
-    def update(self) -> None:
+    def update(self, dt) -> None:
         super().update()
         for exit, (_, arrow_id, dur) in self.arrows.items():
             self.canvas.itemconfig(arrow_id,
                                    fill=col_interp('#ff0000', '#00ff00',
                                                    exit.consumption_time/dur))
+        self._graph_update_delay -= dt
+        if self._graph_update_delay > 0:
+            return
+        self._graph_update_delay += GRAPH_UPDATE_INTERVAL
+        self._update_graph()
+
+    def _update_graph(self):
+        coords = self.model.traffic_light.get_samples()
+        if not self._plots_info:
+            self._plots_info = [
+                self.graph.plot(coords[0], coords[i])[0]
+                for i in range(1, coords.shape[0])
+            ]
+            self.graph.legend(self._plots_info,
+                              ('Сумарний час очікування по горизонталі',
+                               'Сумарний час очікування по вертикалі',
+                               'Середнє двох часів'))
+        else:
+            [x.set_data(coords[0], coords[i + 1])
+             for i, x in enumerate(self._plots_info)]
+            self.graph.set_xlim(coords[0, 0] - 2, coords[0, -1] + 2)
+            self.graph.set_ylim(-2, coords[1:3].max()*1.4)
+            self.figure.canvas.draw()
+            self.figure.canvas.flush_events()
 
     def loop(self):
         while self.running:
             with self.timer:
-                self.update()
+                model_tick = self._simulation_speed_factor/self._frame_rate
+                self.model.tick(model_tick)
+                self.update(model_tick)
                 self.update_idletasks()
-                self.model.tick(self._simulation_speed_factor/self._frame_rate)
 
 
 def col_interp(c1: str, c2: str, t: float):

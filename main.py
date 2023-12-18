@@ -4,7 +4,7 @@ from ui import App
 
 if __name__ == '__main__':
     FRAME_RATE = 60
-    SIMULATION_SPEED_FACTOR = 15.0
+    SIMULATION_SPEED_FACTOR = 60.0
     INTERSECTION_WIDTH = 3
     INTERSECTION_HEIGHT = 3
 

@@ -1,4 +1,5 @@
 from typing import Literal
+import numpy as np
 
 from .lib_event import *
 from .lib_random import *
@@ -6,6 +7,12 @@ from .lib_timer import *
 
 
 PRODUCER_ROAD_PASS_TIMEOUT = 3.0
+OPT_LIGHT_AVERAGING_DUR = 5
+OPT_LIGHT_OPTIMIZATION_STEP_DELAY = 20
+OPT_LIGHT_HISTORY_SIZE = 100
+
+
+def clamp(mn, mx, v): return min(mx, max(mn, v))
 
 
 def with_event_handlers_init(cls):
@@ -14,10 +21,12 @@ def with_event_handlers_init(cls):
         for name, typ in cls.__annotations__.items()
         if typ.__origin__ is Event
     ]
+
     def __init__(s):
         [setattr(s, name, Event()) for name in names]
 
     _old_init = getattr(cls, '__init__')
+
     def new_init(s, *args, **kwgs):
         __init__(s)
         _old_init(s, *args, **kwgs)
@@ -93,11 +102,10 @@ class TrafficFlowLaw:
         return r.random()*self._intersec_span + self._min_time_on_intersec
 
     @property
-    def road_info(self):
-        return self._consumers
+    def road_info(self): raise Exception("Readonly property")
 
     @road_info.setter
-    def road_info(self, value: dict[str, tuple[list['ProducerRoad'], list['ConsumerRoad']]]):
+    def road_info(self, value: dict[str, IntersectionSideInfo]):
         def available_roads(i: int, side: str):
             mpp = lambda *xs: dict(map(tuple, xs))
             res = []
@@ -129,34 +137,93 @@ class TrafficFlowLaw:
 
     @property
     def wave_delay(self):
-        return self._clamp(self._r.exp_dist(self._lambda))
-
-    def _clamp(self, v):
-        return min(self._max_delay, max(v, self._min_delay))
+        value = self._r.exp_dist(self._lambda)
+        return clamp(self._min_delay, self._max_delay, value)
 
 
 @with_event_handlers_init
 class TrafficLight(Tickable):
     light_changed: Event[LightChangedEventArgs]
 
-    def __init__(self, roads: dict[str, IntersectionSideInfo]) -> None:
-        self.roads = roads
+    def __init__(self,
+                 *,
+                 roads: dict[str, IntersectionSideInfo] = None,
+                 other: 'TrafficLight' = None
+                 ):
+        if roads:
+            self.roads = roads
+        elif other:
+            self.roads = other.roads
+        else:
+            raise Exception("Either roads or other light must be supplied")
+
+        self._wait_times: np.ndarray = np.full((4, 1), -1)
+        self._drop_waiting_amounts()
+
+        self._h_time = 30
+        self._v_time = 30
+        self._time_until_next_avg = OPT_LIGHT_AVERAGING_DUR
+        self._time_until_optim = OPT_LIGHT_OPTIMIZATION_STEP_DELAY
+
         self.time_until_switch = 0
         self.states = self.states_iterator()
 
+    def get_samples(self):
+        return self._wait_times
+
+    def _drop_waiting_amounts(self):
+        self._cur_waiting_amounts = [0, 0]
+
+    def optimize(self): ...
+
     def tick(self, dt):
+        self.time_until_switch -= dt
         if self.time_until_switch <= 0:
             state, time_until_switch = next(self.states)
             # keeping previous negative timing
-            self.time_until_switch += time_until_switch - dt
+            self.time_until_switch += time_until_switch
             self.light_changed({side: state[side] for side in self.roads})
 
-        self.time_until_switch -= dt
+        sums = {
+            side: sum(road.car_count for road in roads)
+            for side, (roads, _) in self.roads.items()
+        }
+        self._cur_waiting_amounts[0] += dt*(sums['L'] + sums['R'])
+        self._cur_waiting_amounts[1] += dt*(sums['T'] + sums['B'])
+
+        self._time_until_optim -= dt
+        if self._time_until_optim <= 0:
+            self.optimize()
+            # If wasn't set inside
+            if self._time_until_optim <= 0:
+                self._time_until_optim += OPT_LIGHT_OPTIMIZATION_STEP_DELAY
+
+        self._time_until_next_avg -= dt
+        if self._time_until_next_avg > 0:
+            return
+        self._time_until_next_avg += OPT_LIGHT_AVERAGING_DUR
+        waits = self._wait_times
+
+        X = [waits[0, -1] + dt if waits[0, 0] != -1 else dt][0]
+        H, V = self._cur_waiting_amounts
+        A = (H + V)/2
+        self._drop_waiting_amounts()
+
+        if waits.shape[1] == 1 and waits[0, 0] == -1:
+            waits[:, 0] = [X, H, V, A]
+        elif waits.shape[1] == OPT_LIGHT_HISTORY_SIZE:
+            waits = np.roll(waits, -1, 1)
+            waits[:, -1] = [X, H, V, A]
+        else:
+            waits = np.append(waits, [[X], [H], [V], [A]], 1)
+        self._wait_times = waits
 
     def states_iterator(self) -> tuple[dict[str, TrafficLightColor], float]:
         while True:
-            yield ({'T': 'R', 'B': 'R', 'L': 'G', 'R': 'G'}, 30)
-            yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'}, 30)
+            yield ({'T': 'R', 'B': 'R', 'L': 'G', 'R': 'G'},
+                   self._h_time)
+            yield ({'T': 'G', 'B': 'G', 'L': 'R', 'R': 'R'},
+                   self._v_time)
 
 
 @with_event_handlers_init
