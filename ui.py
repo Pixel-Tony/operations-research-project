@@ -29,7 +29,7 @@ class App(Tk):
     def __init__(self, models: list[Intersection], labels: list[str]):
         super().__init__()
         self.model = models[0]
-        self.models = models[1:]
+        self.models = models
         self.labels = labels
 
         self.protocol('WM_DELETE_WINDOW', self.close)
@@ -50,7 +50,9 @@ class App(Tk):
         self.model.light_changed += self._on_traffic_light_change
         self.model.car_entered_intersection += self._on_car_entered_inters
         self.model.exit_road_cleared += self._on_exit_cleared
-        self.arrows: dict[ConsumerRoad, (ProducerRoad, int, tuple[int, ...], float)] = {}
+        self.arrows: dict[
+            ConsumerRoad, (ProducerRoad, int, tuple[int, ...], float)
+        ] = {}
 
     def _on_car_entered_inters(self, args: tuple[ProducerRoad, ConsumerRoad]):
         prod, cons = args
@@ -291,7 +293,6 @@ class App(Tk):
         cur = self.simulation_speed_factor
         self.simulation_speed_factor = max(cur//2, 1)
 
-
     def _add_arrow(self, pside: str, p_ind: int, cside: str, c_ind: int):
         ROADS_W, ROADS_H = self.model.width, self.model.height
         X_MID = ROAD_PAD_XY + ROADS_W*(ROAD_WIDTH + 1) - 1
@@ -354,11 +355,8 @@ class App(Tk):
         super().update()
         for exit, (_, arrow_id, (x, y, x1, y1), dur) in self.arrows.items():
             t = exit.consumption_time/dur
-            self.canvas.coords(arrow_id,
-                                   (x*t + x1*(1-t),
-                                    y*t + y1*(1-t),
-                                    x1, y1)
-                                   )
+            coords = (x*t + x1*(1-t), y*t + y1*(1-t), x1, y1)
+            self.canvas.coords(arrow_id, coords)
 
         self._graph_update_delay -= dt
         if self._graph_update_delay > 0:
@@ -367,27 +365,27 @@ class App(Tk):
         self._update_graph()
 
     def _update_graph(self):
-        for model in (self.model, *self.models):
+        for model in self.models:
             coords = model.traffic_light.get_samples()
             self._plots_info[model].set_data(coords[0], coords[3])
 
         self.graph.set_xlim(coords[0, 0] - 2, coords[0, -1] + 2)
-        self.graph.set_ylim(-2, max([m.traffic_light.get_samples()[1:3].max() for m in [self.model, *self.models]]))
+        self.graph.set_ylim(-2, max(m.traffic_light.get_samples()[1:3].max()
+                            for m in self.models))
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
 
     def loop(self):
         self._plots_info = {
-            m: self.graph.plot(coords[0], coords[3], label=lbl)[0]
-            for (m, lbl) in zip((self.model, *self.models), self.labels)
-            for coords in [m.traffic_light.get_samples()]
+            model: self.graph.plot(coords[0], coords[3], label=label)[0]
+            for (model, label) in zip(self.models, self.labels)
+            for coords in [model.traffic_light.get_samples()]
         }
         self.graph.legend()
+
         while self.running:
             with self.timer:
                 model_tick = self._simulation_speed_factor/self._frame_rate
-                self.model.tick(model_tick)
                 [m.tick(model_tick) for m in self.models]
                 self.update(model_tick)
                 self.update_idletasks()
-

@@ -6,7 +6,7 @@ from .lib_random import *
 from .lib_timer import *
 
 
-PRODUCER_ROAD_PASS_TIMEOUT = 3.0
+PRODUCER_ROAD_PASS_TIMEOUT = 1.0
 OPT_LIGHT_AVERAGING_DUR = 50
 LIGHT_CYCLE_DUR = 120
 OPT_LIGHT_HISTORY_SIZE = 150
@@ -22,16 +22,13 @@ def with_event_handlers_init(cls):
         if typ.__origin__ is Event
     ]
 
-    def __init__(s):
-        [setattr(s, name, Event()) for name in names]
-
     _old_init = getattr(cls, '__init__')
 
     def new_init(s, *args, **kwgs):
-        __init__(s)
+        [setattr(s, name, Event()) for name in names]
         _old_init(s, *args, **kwgs)
-
     setattr(cls, '__init__', new_init)
+
     return cls
 
 
